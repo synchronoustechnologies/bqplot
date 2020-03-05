@@ -35,12 +35,10 @@ export class MarketMap extends Figure {
 
     render(options?) {
         this.id = widgets.uuid();
-        const min_width = String(this.model.get("layout").get("min_width"));
-        const min_height = String(this.model.get("layout").get("min_height"));
 
-        const impl_dimensions = this._get_height_width(min_height.slice(0, -2), min_width.slice(0, -2));
-        this.width = impl_dimensions["width"];
-        this.height = impl_dimensions["height"];
+        const figureSize = this.getFigureSize();
+        this.width = figureSize.width;
+        this.height = figureSize.height;
 
         this.scales = {};
         this.set_top_el_style();
@@ -187,9 +185,9 @@ export class MarketMap extends Figure {
     relayout() {
         const that = this;
 
-        const impl_dimensions = this._get_height_width(this.el.clientHeight, this.el.clientWidth);
-        this.width = impl_dimensions["width"];
-        this.height = impl_dimensions["height"];
+        const figureSize = this.getFigureSize();
+        this.width = figureSize.width;
+        this.height = figureSize.height;
 
         window.requestAnimationFrame(function () {
             // update ranges
@@ -410,16 +408,11 @@ export class MarketMap extends Figure {
 
             // Grouping calls to style into a single call to styles
             // leads to build error despite the import of d3-selection-multi
-            let text = new_groups.append("text")
+            new_groups.append("text")
                 .classed("market_map_text", true)
                 .style("text-anchor", "middle")
-                .style('fill', 'black')
                 .style("pointer-events", "none")
                 .style("dominant-baseline", "central");
-            let fontStyle = that.model.get("font_style");
-            for (let i in Object.keys(fontStyle)) {
-                text.style(i, fontStyle[i]);
-            }
 
             groups = new_groups.merge(groups);
 
@@ -464,6 +457,7 @@ export class MarketMap extends Figure {
                        "height": "100%", "justify-content": "center", "word-wrap": "break-word", "font": "24px sans-serif", "color": "black"})
                 .text(that.groups[i]);
         });
+        this.update_font_style();
         this.draw_group_names();
     }
 
@@ -499,11 +493,11 @@ export class MarketMap extends Figure {
         });
     }
 
-    update_font_style(model, value) {
+    update_font_style() {
         // This is a bit awkward because we did not figure out how to get
         // Typescript to recognize the d3-select-multi typings.
         const x: any = this.svg.selectAll(".market_map_text");
-        x.styles(value);
+        x.styles(this.model.get('font_style'));
     }
 
     update_map_colors() {

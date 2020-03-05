@@ -3,8 +3,14 @@ import './binary_serialization';
 import './scales';
 import './scatter';
 import './scatter-mega';
+import './pie';
 import './lines';
+import './gridheatmap';
 import './bars';
+import './hist';
 import './utils';
 import './figure';
 import './interacts'
+
+require('@jupyter-widgets/controls/css/widgets.css');
+require('../../css/bqplot.css');

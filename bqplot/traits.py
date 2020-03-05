@@ -84,45 +84,6 @@ class Date(TraitType):
         self.tag(**date_serialization)
 
 
-def convert_to_date(array, fmt='%m-%d-%Y'):
-    # If array is a np.ndarray with type == np.datetime64, the array can be
-    # returned as such. If it is an np.ndarray of dtype 'object' then conversion
-    # to string is tried according to the fmt parameter.
-
-    if(isinstance(array, np.ndarray) and np.issubdtype(array.dtype, np.datetime64)):
-        # no need to perform any conversion in this case
-        return array
-    elif(isinstance(array, list) or (isinstance(array, np.ndarray) and array.dtype == 'object')):
-        return_value = []
-        # Pandas to_datetime handles all the cases where the passed in
-        # data could be any of the combinations of
-        #            [list, nparray] X [python_datetime, np.datetime]
-        # Because of the coerce=True flag, any non-compatible datetime type
-        # will be converted to pd.NaT. By this comparison, we can figure
-        # out if it is date castable or not.
-        if(len(np.shape(array)) == 2):
-            for elem in array:
-                temp_val = pd.to_datetime(
-                    elem, errors='coerce', box=False, infer_datetime_format=True)
-                temp_val = elem if (
-                    temp_val[0] == np.datetime64('NaT')) else temp_val
-                return_value.append(temp_val)
-        elif(isinstance(array, list)):
-            temp_val = pd.to_datetime(
-                array, errors='coerce', box=False, infer_datetime_format=True)
-            return_value = array if (
-                temp_val[0] == np.datetime64('NaT')) else temp_val
-        else:
-            temp_val = pd.to_datetime(
-                array, errors='coerce', box=False, infer_datetime_format=True)
-            temp_val = array if (
-                temp_val[0] == np.datetime64('NaT')) else temp_val
-            return_value = temp_val
-        return return_value
-    elif(isinstance(array, np.ndarray)):
-        warnings.warn("Array could not be converted into a date")
-        return array
-
 def array_from_json(value, obj=None):
     if value is not None:
         # this will accept regular json data, like an array of values, which can be useful it you want
@@ -165,15 +126,24 @@ def array_to_json(ar, obj=None, force_contiguous=True):
     if ar.dtype.kind in ['S', 'U']:  # strings to as plain json
         return ar.tolist()
     type = None
+
+    if ar.dtype.kind == 'O':
+        # If it's a Timestamp object
+        istimestamp = np.vectorize(lambda x: isinstance(x, pd.Timestamp))
+        if np.all(istimestamp(ar)):
+            ar = ar.astype('datetime64[ms]').astype(np.float64)
+            type = 'date'
+        else:
+            raise ValueError("Unsupported dtype object")
+
     if ar.dtype.kind == 'M':
         # since there is no support for int64, we'll use float64 but as ms
         # resolution, since that is the resolution the js Date object understands
         ar = ar.astype('datetime64[ms]').astype(np.float64)
         type = 'date'
+
     if ar.dtype.kind not in ['u', 'i', 'f']:  # ints and floats, and datetime
-        raise ValueError("unsupported dtype: %s" % (ar.dtype))
-    # if ar.dtype == np.float64:  # WebGL does not support float64, cast it here?
-    #     ar = ar.astype(np.float32)
+        raise ValueError("Unsupported dtype: %s" % (ar.dtype))
     if ar.dtype == np.int64:  # JS does not support int64
         ar = ar.astype(np.int32)
     if force_contiguous and not ar.flags["C_CONTIGUOUS"]:  # make sure it's contiguous
@@ -181,7 +151,7 @@ def array_to_json(ar, obj=None, force_contiguous=True):
     if not ar.dtype.isnative:
         dtype = ar.dtype.newbyteorder()
         ar = ar.astype(dtype)
-    return {'value':memoryview(ar), 'dtype':str(ar.dtype), 'shape':ar.shape, 'type': type}
+    return {'value': memoryview(ar), 'dtype': str(ar.dtype), 'shape': ar.shape, 'type': type}
 
 
 array_serialization = dict(to_json=array_to_json, from_json=array_from_json)
@@ -202,7 +172,7 @@ def array_dimension_bounds(mindim=0, maxdim=np.inf):
         return value
     return validator
 
-def array_supported_kinds(kinds='biufMSU'):
+def array_supported_kinds(kinds='biufMSUO'):
     def validator(trait, value):
         if value.dtype.kind not in kinds:
             raise TraitError('Array type not supported for trait %s of class %s: expected a \

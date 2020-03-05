@@ -27,7 +27,9 @@ export class Hist extends Mark {
 
     render() {
         const base_creation_promise = super.render();
-        this.bars_selected = [];
+        this.selected_indices = this.calc_bar_indices_from_data_idx(this.model.get("selected"));
+        this.selected_style = this.model.get("selected_style");
+        this.unselected_style = this.model.get("unselected_style");
 
         this.display_el_classes = ["rect", "legendtext"];
 
@@ -95,18 +97,26 @@ export class Hist extends Mark {
         }
     }
 
-    update_colors(model, colors) {
+    update_colors() {
         this.d3el.selectAll(".bargroup").selectAll("rect")
-          .style("fill", this.get_colors(0));
-        if (model.get("labels") && colors.length > 1) {
+          .style("fill", (d, i) => {
+              return this.get_colors(d.index);
+          });
+        if (this.model.get("labels")) {
             this.d3el.selectAll(".bargroup").selectAll("text")
-              .style("fill", this.get_colors(1));
+              .style("fill", (d, i) => {
+                  return this.get_colors(i)
+              });
         }
         if (this.legend_el) {
             this.legend_el.selectAll("rect")
-              .style("fill", this.get_colors(0));
+              .style("fill", (d, i) => {
+                  return this.get_colors(i)
+              });
             this.legend_el.selectAll("text")
-              .style("fill", this.get_colors(0));
+              .style("fill", (d, i) => {
+                  return this.get_colors(i)
+              });
         }
     }
 
@@ -153,8 +163,6 @@ export class Hist extends Mark {
 
     draw() {
         this.set_ranges();
-        const colors = this.model.get("colors");
-        const fill_color = colors[0];
 
         const indices = [];
         this.model.mark_data.forEach(function(d, i) {
@@ -189,7 +197,9 @@ export class Hist extends Mark {
           });
 
         bar_groups.select(".rect")
-          .style("fill", fill_color)
+          .style("fill", (d, i) => {
+              return this.get_colors(d.index);
+          })
           .on("click", function(d, i) {
               return that.event_dispatcher("element_clicked", {
                   "data": d, "index": i
@@ -221,7 +231,7 @@ export class Hist extends Mark {
         const index = args.index;
         //code repeated from bars. We should unify the two.
         const that = this;
-        const idx = this.bars_selected;
+        const idx = this.selected_indices;
         let selected: number[] = idx ? utils.deepCopy(idx) : [];
         // index of bar i. Checking if it is already present in the list.
         const elem_index = selected.indexOf(index);
@@ -267,7 +277,7 @@ export class Hist extends Mark {
                 selected.push(index);
             }
         }
-        this.bars_selected = selected;
+        this.selected_indices = selected;
         this.model.set("selected", ((selected.length === 0) ? null :
                                      this.calc_data_indices(selected)),
                                     {updated_view: this});
@@ -335,36 +345,45 @@ export class Hist extends Mark {
         return [1, max_length];
     }
 
-    reset_colors(index, color) {
-        const rects = this.d3el.selectAll("#rect"+index);
-        rects.style("fill", color);
-    }
-
     update_selected(model, value) {
-        if(value === undefined || value === null || value.length === 0) {
-            //reset the color of everything if selected is blank
-            this.update_selected_colors([]);
-            return;
-        } else {
-            const indices = this.calc_bar_indices_from_data_idx(value);
-            this.update_selected_colors(indices);
-        }
+        this.selected_indices = this.calc_bar_indices_from_data_idx(value);
+        this.apply_styles();
     }
 
-    update_selected_colors(indices) {
-        // listen to changes of selected and draw itself
-        const colors = this.model.get("colors");
-        const select_color = colors.length > 1 ? colors[1] : "red";
-        const fill_color = colors[0];
-        this.d3el.selectAll(".bargroup");
-        const that = this;
-        _.difference(_.range(0, this.model.num_bins), indices)
-            .forEach(function(d) {
-                that.d3el.selectAll("#rect" + d).style("fill", fill_color);
+    clear_style(style_dict, indices?) {
+        let elements = this.d3el.selectAll(".bargroup");
+        if (indices) {
+            elements = elements.filter(function (d, index) {
+                return indices.indexOf(index) !== -1;
             });
-        indices.forEach(function(d) {
-            that.d3el.selectAll("#rect" + d).style("fill", select_color);
+        }
+        const clearing_style = {};
+        for (const key in style_dict) {
+            clearing_style[key] = null;
+        }
+        elements.selectAll(".bar").styles(clearing_style);
+    }
+
+    set_default_style(indices, elements?) {
+        this.update_colors();
+        this.update_stroke_and_opacities();
+    }
+
+    set_style_on_elements(style, indices) {
+        // If the index array is undefined or of length=0, exit the
+        // function without doing anything
+        if (indices === undefined || indices === null || indices.length === 0) {
+            return;
+        }
+        // Also, return if the style object itself is blank
+        if (Object.keys(style).length === 0) {
+            return;
+        }
+        let elements = this.d3el.selectAll(".bargroup");
+        elements = elements.filter(function (data, index) {
+            return indices.indexOf(index) !== -1;
         });
+        elements.selectAll(".rect").styles(style);
     }
 
     invert_point(pixel) {
@@ -396,8 +415,8 @@ export class Hist extends Mark {
             return [];
         }
         const pixels = this.pixel_coords;
-        const indices = _.range(pixels.length);
-        const selected_bins = _.filter(indices, function(index) {
+        const indices = new Uint32Array(_.range(pixels.length));
+        const selected_bins = indices.filter(index => {
             return rect_selector(pixels[index]);
         });
         this.model.set("selected", this.calc_data_indices(selected_bins));
@@ -414,7 +433,8 @@ export class Hist extends Mark {
 
         const x_data = this.model.get("sample");
         const num_intervals = intervals.length;
-        const selected = _.filter(_.range(x_data.length), function(index) {
+        const indices_data = new Uint32Array(_.range(x_data.length));
+        const selected = indices_data.filter(index => {
             const elem = x_data[index];
             for(let iter=0; iter < num_intervals; iter++) {
                 if(elem <= intervals[iter][1] && elem >= intervals[iter][0]) {
@@ -468,8 +488,12 @@ export class Hist extends Mark {
     calc_bar_indices_from_data_idx(selected) {
         //function to calculate bar indices for a given list of data
         //indices
+        if (selected === null) {
+            return null;
+        }
+
         const x_data = this.model.get("sample");
-        const data = selected.map(function(idx) {
+        const data = Array.from(selected).map(function(idx: number) {
             return x_data[idx];
         });
         let bar_indices = [];
@@ -491,24 +515,15 @@ export class Hist extends Mark {
     }
 
     reset_selection() {
-        this.bars_selected = [];
+        this.selected_indices = [];
         this.model.set("selected", null);
         this.touch();
-    }
-
-    clear_style(style_dict, indices?, elements?) {
     }
 
     compute_view_padding() {
     }
 
-    set_default_style(indices, elements?) {
-    }
-
-    set_style_on_elements(style, indices, elements?) {
-    }
-
-    bars_selected: Array<number>;
+    selected_indices: Array<number> | null;
     legend_el: any;
     bin_pixels: Array<number>;
     pixel_coords: Array<Array<number>>;

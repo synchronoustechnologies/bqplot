@@ -25,7 +25,15 @@ import { WidgetView } from '@jupyter-widgets/base';
 
 THREE.ShaderChunk['scales'] = require('raw-loader!../shaders/scales.glsl').default;
 
-export class Figure extends widgets.DOMWidgetView {
+interface IFigureSize
+{
+    width: number,
+    height: number
+};
+
+
+export
+class Figure extends widgets.DOMWidgetView {
 
     initialize() {
         // Internet Explorer does not support classList for svg elements
@@ -54,65 +62,37 @@ export class Figure extends widgets.DOMWidgetView {
         super.initialize.apply(this, arguments);
     }
 
-    _get_height_width(suggested_height, suggested_width) {
-        //Calculates the height and width of the figure from the suggested_height
-        //and suggested_width. Looks at the min_aspect_ratio and max_aspect_ratio
-        //to determine the final height and width.
+    protected getFigureSize (): IFigureSize {
+        const figureSize: IFigureSize = this.el.getBoundingClientRect();
+        const clientRectRatio = figureSize.width / figureSize.height;
 
-        const max_ratio = this.model.get("max_aspect_ratio");
-        const min_ratio = this.model.get("min_aspect_ratio");
+        const minRatio: number = this.model.get('min_aspect_ratio');
+        const maxRatio: number = this.model.get('max_aspect_ratio');
 
-        const return_value = {};
-        const width_undefined = (suggested_width === undefined || isNaN(suggested_width) || suggested_width <= 0);
-        const height_undefined = (suggested_height === undefined || isNaN(suggested_height) || suggested_width <= 0);
-
-        if (width_undefined && height_undefined) {
-            // Same as the defaults in bqplot.less
-            suggested_height = 480;
-            suggested_width = 640;
-        } else if (height_undefined) {
-            suggested_height = suggested_width / min_ratio;
-        } else if (width_undefined) {
-            suggested_width = suggested_height * min_ratio;
+        if (clientRectRatio < minRatio) {
+            // Too much vertical space: Keep horizontal space but compute height from min aspect ratio
+            figureSize.height = figureSize.width / minRatio;
+        }
+        else if (clientRectRatio > maxRatio) {
+            // Too much horizontal space: Keep vertical space but compute width from max aspect ratio
+            figureSize.width = figureSize.height * maxRatio;
         }
 
-        const ratio = suggested_width / suggested_height;
-        if (ratio <= max_ratio && ratio >= min_ratio) {
-            // If the available width and height are within bounds in terms
-            // of aspect ration, use all the space available.
-            return_value["width"] = suggested_width;
-            return_value["height"] = suggested_height;
-        } else if (ratio > max_ratio) {
-            // Too much horizontal space
-            // Use all vertical space and compute width from max aspect ratio.
-            return_value["height"] = suggested_height;
-            return_value["width"] = suggested_height * max_ratio;
-         } else { // ratio < min_ratio
-            // Too much vertical space
-            // Use all horizontal space and compute height from min aspect ratio.
-            return_value["width"] = suggested_width;
-            return_value["height"] = suggested_width / min_ratio;
-        }
-        return return_value;
+        return figureSize;
     }
 
-    render () : Promise<any> {
-        let min_width = this.model.get("layout").get("min_width");
-        let min_height = this.model.get("layout").get("min_height");
-        if(typeof min_width === "string" && min_width.endsWith('px')) {
-            min_width = Number(min_width.slice(0, -2));
-        } else {
-            min_width = undefined;
-        }
-        if(typeof min_height === "string"  && min_height.endsWith('px')) {
-            min_height = Number(min_height.slice(0, -2));
-        } else {
-            min_height = undefined;
-        }
+    render () {
+        // we cannot use Promise.all here, since this.layoutPromise is resolved, and will be overwritten later on
+        this.displayed.then(() => {
+            // make sure we render after all layouts styles are set, since they can affect the size
+            this.layoutPromise.then(this.renderImpl.bind(this));
+        });
+    }
 
-        const impl_dimensions = this._get_height_width(min_height, min_width);
-        this.width = impl_dimensions["width"];
-        this.height = impl_dimensions["height"];
+    private renderImpl () {
+        const figureSize = this.getFigureSize();
+        this.width = figureSize.width;
+        this.height = figureSize.height;
 
         this.id = widgets.uuid();
 
@@ -243,7 +223,7 @@ export class Figure extends widgets.DOMWidgetView {
             const axis_views_updated = this.axis_views.update(this.model.get("axes"));
 
             // TODO: move to the model
-            this.model.on_some_change(["fig_margin", "min_aspect_ration", "max_aspect_ratio"], this.relayout, this);
+            this.model.on_some_change(["fig_margin", "min_aspect_ratio", "max_aspect_ratio"], this.relayout, this);
             this.model.on_some_change(["padding_x", "padding_y"], () => {
                 this.figure_padding_x = this.model.get("padding_x");
                 this.figure_padding_y = this.model.get("padding_y");
@@ -271,20 +251,19 @@ export class Figure extends widgets.DOMWidgetView {
                 })
             }, this);
 
-            this.displayed.then((args: any) => {
-                document.body.appendChild(this.tooltip_div.node());
-                this.create_listeners();
-                if(args === undefined || args.add_to_dom_only !== true) {
-                    //do not relayout if it is only being added to the DOM
-                    //and not displayed.
-                    this.relayout();
-                }
-                // In the classic notebook, we should relayout the figure on
-                // resize of the main window.
-                window.addEventListener('resize', () => {
-                    this.relayout();
-                })
+            document.body.appendChild(this.tooltip_div.node());
+            this.create_listeners();
+
+            // In the classic notebook, we should relayout the figure on
+            // resize of the main window.
+            this.debouncedRelayout = _.debounce(() => {
+                this.relayout();
+            }, 300);
+            window.addEventListener('resize', this.debouncedRelayout);
+            this.once('remove', () => {
+                window.removeEventListener('resize', this.debouncedRelayout);
             });
+
             return Promise.all([mark_views_updated, axis_views_updated]);
         });
     }
@@ -572,18 +551,24 @@ export class Figure extends widgets.DOMWidgetView {
         super.processPhosphorMessage.apply(this, arguments);
         switch (msg.type) {
         case 'resize':
-        case 'after-attach':
-            this.relayout();
+        case 'after-show':
+            if (this.pWidget.isVisible) {
+                const figureSize = this.getFigureSize();
+                if ((this.width !== figureSize.width) || (this.height !== figureSize.height)) {
+                    this.debouncedRelayout();
+                }
+    
+            }
             break;
         }
     }
 
     relayout() {
-        const impl_dimensions = this._get_height_width(this.el.clientHeight, this.el.clientWidth);
-        this.width = impl_dimensions["width"];
-        this.height = impl_dimensions["height"];
-
-        window.requestAnimationFrame(() => {
+        const relayoutImpl = () => {
+            this.relayoutRequested = false; // reset relayout request
+            const figureSize = this.getFigureSize();
+            this.width = figureSize.width;
+            this.height = figureSize.height;
             // update ranges
             this.margin = this.model.get("fig_margin");
             this.update_plotarea_dimensions();
@@ -622,8 +607,12 @@ export class Figure extends widgets.DOMWidgetView {
             this.trigger("margin_updated");
             this.update_legend();
             this.layout_webgl_canvas();
-        });
+        };
 
+        if (!this.relayoutRequested) {
+            this.relayoutRequested = true; // avoid scheduling a relayout twice
+            requestAnimationFrame(relayoutImpl.bind(this))
+        }
     }
 
     layout_webgl_canvas() {
@@ -787,7 +776,13 @@ export class Figure extends widgets.DOMWidgetView {
             const sheets = document.styleSheets;
             let selector;
             for (let i = 0; i < sheets.length; i++) {
-                const rules: any = (sheets[i] as CSSStyleSheet).cssRules;
+                let rules: any = null;
+                // due to CORS we may have some sheets we cannot access, instead of checking we always try
+                try {
+                    rules = (sheets[i] as CSSStyleSheet).cssRules;
+                } catch(e) {
+                    // ignore CORS errors
+                }
                 if (rules) {
                     for (let j = 0; j < rules.length; j++) {
                         const rule = rules[j];
@@ -839,14 +834,23 @@ export class Figure extends widgets.DOMWidgetView {
             svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
             svg.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
             svg.style.background = window.getComputedStyle(document.body).background;
-            const s = document.createElement("style");
-            s.setAttribute("type", "text/css");
-            s.innerHTML = "<![CDATA[\n" +
-                get_css(node_foreground, ["\.theme-dark", "\.theme-light", ".bqplot > ", ":root"]) + "\n" +
-                get_css(node_background, ["\.theme-dark", "\.theme-light", ".bqplot > "]) + "\n" +
-                "]]>";
+
+            const computedStyle = window.getComputedStyle(this.el);
+            var cssCode = get_css(this.el, ["\.theme-dark", "\.theme-light", ".bqplot > ", ":root"]) + "\n";
+            // extract all CSS variables, and generate a piece of css to define the variables
+            var cssVariables = cssCode.match(/(--\w[\w-]*)/g) || [];
+            var cssVariableCode = cssVariables.reduce((cssCode, variable) => {
+                const value = computedStyle.getPropertyValue(variable);
+                return `${cssCode}\n\t${variable}: ${value};`;
+            }, ":root {") + "\n}\n";
+
+            // and put the CSS in a style element
+            const styleElement = document.createElement("style");
+            styleElement.setAttribute("type", "text/css");
+            styleElement.innerHTML = "<![CDATA[\n" + cssVariableCode + cssCode + "]]>";
+
             const defs = document.createElement("defs");
-            defs.appendChild(s);
+            defs.appendChild(styleElement);
             // we put the svg background part before the marks
             const g_root = svg.children[0];
             const svg_background = node_background.cloneNode(true);
@@ -964,6 +968,7 @@ export class Figure extends widgets.DOMWidgetView {
     change_layout: any;
     clip_id: any;
     clip_path: any;
+    debouncedRelayout: any;
     fig_axes: any;
     fig_interaction: any;
     fig_marks: any;
@@ -994,6 +999,7 @@ export class Figure extends widgets.DOMWidgetView {
     y_padding_arr: any;
 
     private _update_requested: boolean;
+    private relayoutRequested: boolean = false;
     // this is public for the test framework, but considered a private API
     public _initial_marks_created: Promise<any>;
     private _initial_marks_created_resolve: Function;

@@ -58,27 +58,27 @@ export class AxisModel extends BaseModel {
     }
 
     validate_side() {
-        const orientation = this.get("orientation");
-        let side = this.get("side");
-        if(orientation === "vertical") {
-            if (side !== "left" && side !== "right") {
-                this.set("side", "left");
+        const orientation = this.get('orientation');
+        const side = this.get('side');
+        if(orientation === 'vertical') {
+            if (side !== 'left' && side !== 'right') {
+                this.set('side', 'left');
             }
         } else {
-            if (side !== "bottom" && side !== "top") {
-                this.set("side", "bottom");
+            if (side !== 'bottom' && side !== 'top') {
+                this.set('side', 'bottom');
             }
         }
         this.save_changes();
     }
 
     validate_orientation() {
-        const side = this.get("side");
+        const side = this.get('side');
         if (side) {
-            if(side === "left" || side === "right") {
-                this.set("orientation", "vertical");
+            if(side === 'left' || side === 'right') {
+                this.set('orientation', 'vertical');
             } else {
-                this.set("orientation", "horizontal");
+                this.set('orientation', 'horizontal');
             }
             this.save_changes();
         }
