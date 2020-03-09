@@ -24,6 +24,7 @@ Marks
    :toctree: _generate/
 
    Mark
+   Gantt
    Lines
    FlexLine
    Scatter
@@ -280,6 +281,69 @@ class Mark(Widget):
         elif content.get('event', '') == 'background_click':
             self._bg_click_handlers(self, content)
 
+
+@register_mark('bqplot.Gantt')
+class Gantt(Mark):
+    # Mark decoration
+    icon = 'fa-line-chart'
+    name = 'Lines'
+
+    # Scaled attributes
+    x = Array([]).tag(sync=True, scaled=True,
+                      rtype='Number', atype='bqplot.Axis',
+                      **array_serialization)\
+        .valid(array_squeeze, array_dimension_bounds(1, 2), array_supported_kinds())
+    y = Array([]).tag(sync=True, scaled=True,
+                      rtype='Number', atype='bqplot.Axis',
+                      **array_serialization)\
+        .valid(array_squeeze, array_dimension_bounds(1, 2), array_supported_kinds())
+    color = Array(None, allow_none=True).tag(sync=True,
+                                             scaled=True,
+                                             rtype='Color',
+                                             atype='bqplot.ColorAxis',
+                                             **array_serialization)\
+        .valid(array_squeeze, array_dimension_bounds(1, 1))
+
+    # Other attributes
+    scales_metadata = Dict({
+        'x': {'orientation': 'horizontal', 'dimension': 'x'},
+        'y': {'orientation': 'vertical', 'dimension': 'y'},
+        'color': {'dimension': 'color'}
+    }).tag(sync=True)
+    colors = List(trait=Color(default_value=None, allow_none=True),
+                  default_value=CATEGORY10)\
+        .tag(sync=True, display_name='Colors')
+    fill_colors = List(trait=Color(default_value=None, allow_none=True))\
+        .tag(sync=True, display_name='Fill colors')
+    stroke_width = Float(2.0).tag(sync=True, display_name='Stroke width')
+    labels_visibility = Enum(['none', 'label'], default_value='none')\
+        .tag(sync=True, display_name='Labels visibility')
+    curves_subset = List().tag(sync=True)
+    line_style = Enum(['solid', 'dashed', 'dotted', 'dash_dotted'],
+                      default_value='solid')\
+        .tag(sync=True, display_name='Line style')
+    interpolation = Enum(['linear', 'basis', 'basis-open',
+                          'basis-closed', 'bundle',
+                          'cardinal', 'cardinal-open',
+                          'cardinal-closed', 'monotone', 'step-before',
+                          'step-after'],
+                         default_value='linear')\
+        .tag(sync=True, display_name='Interpolation')
+    close_path = Bool().tag(sync=True, display_name='Close path')
+    fill = Enum(['none', 'bottom', 'top', 'inside', 'between'],
+                default_value='none')\
+        .tag(sync=True, display_name='Fill')
+    marker = Enum(['circle', 'cross', 'diamond', 'square', 'triangle-down',
+                   'triangle-up', 'arrow', 'rectangle', 'ellipse'],
+                  default_value=None, allow_none=True)\
+        .tag(sync=True, display_name='Marker')
+    marker_size = Int(64).tag(sync=True, display_name='Default size')
+
+    opacities = List().tag(sync=True, display_name='Opacity')
+    fill_opacities = List().tag(sync=True, display_name='Fill Opacity')
+
+    _view_name = Unicode('Gantt').tag(sync=True)
+    _model_name = Unicode('GanttModel').tag(sync=True)
 
 @register_mark('bqplot.Lines')
 class Lines(Mark):

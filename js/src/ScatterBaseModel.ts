@@ -19,34 +19,35 @@ import * as serialize from './serialize';
 export class ScatterBaseModel extends MarkModel {
 
     defaults() {
-        return {...MarkModel.prototype.defaults(),
-        _model_name: "ScatterBaseModel",
-        _view_name: "ScatterBase",
+        return {
+            ...MarkModel.prototype.defaults(),
+            _model_name: "ScatterBaseModel",
+            _view_name: "ScatterBase",
 
-        x: [],
-        y: [],
-        color: null,
-        opacity: null,
-        size: null,
-        rotation: null,
-        hovered_point: null,
-        scales_metadata: {
-            x: { orientation: "horizontal", dimension: "x" },
-            y: { orientation: "vertical", dimension: "y" },
-            color: { dimension: "color" },
-            size: { dimension: "size" },
-            opacity: { dimension: "opacity" },
-            rotation: { dimension: "rotation" }
-        },
-        hovered_style: {},
-        unhovered_style: {},
-        colors: ['steelblue'],
-        default_opacities: [1.0],
-        enable_move: false,
-        enable_delete: false,
-        restrict_x: false,
-        restrict_y: false,
-        update_on_move: false
+            x: [],
+            y: [],
+            color: null,
+            opacity: null,
+            size: null,
+            rotation: null,
+            hovered_point: null,
+            scales_metadata: {
+                x: { orientation: "horizontal", dimension: "x" },
+                y: { orientation: "vertical", dimension: "y" },
+                color: { dimension: "color" },
+                size: { dimension: "size" },
+                opacity: { dimension: "opacity" },
+                rotation: { dimension: "rotation" }
+            },
+            hovered_style: {},
+            unhovered_style: {},
+            colors: ['steelblue'],
+            default_opacities: [1.0],
+            enable_move: false,
+            enable_delete: false,
+            restrict_x: false,
+            restrict_y: false,
+            update_on_move: false
         };
     }
 
@@ -131,7 +132,8 @@ export class ScatterBaseModel extends MarkModel {
        }
     }
 
-    static serializers = {...MarkModel.serializers,
+    static serializers = {
+        ...MarkModel.serializers,
         x: serialize.array_or_json,
         y: serialize.array_or_json,
         color: serialize.array_or_json,
