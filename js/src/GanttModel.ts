@@ -10,6 +10,7 @@ export class GanttModel extends MarkModel {
             ...MarkModel.prototype.defaults(),
             _model_name: "GanttModel",
             _view_name: "Gantt",
+
             x: [],
             y: [],
             color: null,
@@ -31,15 +32,23 @@ export class GanttModel extends MarkModel {
             marker_size: 64,
             opacities: [],
             fill_opacities: [],
-            // Scatter options
-            enable_move: false
+            // Drag & Drop options
+            enable_move: false,
+            restrict_x: false,
+            restrict_y: false,
+            update_on_move: false
         };
     }
 
     initialize(attributes, options) {
         super.initialize(attributes, options);
         this.on_some_change(["x", "y", "color"], this.update_data, this);
-        this.on("change:labels", this.update_labels, this);
+        this.on_some_change(["names", "names_unique"], function() {
+            this.update_unique_ids();
+            this.trigger("data_updated");
+        }, this);
+        // this.on("change:labels", this.update_labels, this);
+
         // FIXME: replace this with on("change:preserve_domain"). It is not done here because
         // on_some_change depends on the GLOBAL backbone on("change") handler which
         // is called AFTER the specific handlers on("change:foobar") and we make that
@@ -61,10 +70,8 @@ export class GanttModel extends MarkModel {
         if (this.x_data.length === 0 || this.y_data.length === 0) {
             this.mark_data = [];
         } else {
-            this.x_data = utils.is_array(this.x_data[0]) ?
-                this.x_data : [this.x_data];
-            this.y_data = utils.is_array(this.y_data[0]) ?
-                this.y_data : [this.y_data];
+            this.x_data = utils.is_array(this.x_data[0]) ? this.x_data : [this.x_data];
+            this.y_data = utils.is_array(this.y_data[0]) ? this.y_data : [this.y_data];
             curve_labels = this.get_labels();
 
             const y_length = this.y_data.length;
@@ -76,9 +83,12 @@ export class GanttModel extends MarkModel {
                         name: name,
                         // since y_data may be a TypedArray, explicitly use Array.map
                         values: Array.prototype.map.call(that.y_data[i], function(d, j) {
-                            return {x: that.x_data[0][j], y: d,
-                                    y0: that.y_data[Math.min(i + 1, y_length - 1)][j],
-                                    sub_index: j};
+                            return {
+                                x: that.x_data[0][j],
+                                y: d,
+                                y0: that.y_data[Math.min(i + 1, y_length - 1)][j],
+                                sub_index: j,
+                            };
                         }),
                         color: that.color_data[i],
                         index: i,
@@ -90,9 +100,12 @@ export class GanttModel extends MarkModel {
                     return {
                         name: name,
                         values: xy_data.map(function(d, j) {
-                            return {x: d[0], y: d[1],
-                                    y0: that.y_data[Math.min(i + 1, y_length - 1)][j],
-                                    sub_index: j};
+                            return {
+                                x: d[0],
+                                y: d[1],
+                                y0: that.y_data[Math.min(i + 1, y_length - 1)][j],
+                                sub_index: j,
+                            };
                         }),
                         color: that.color_data[i],
                         index: i,
@@ -100,9 +113,29 @@ export class GanttModel extends MarkModel {
                 });
             }
         }
+        this.update_unique_ids();
         this.update_domains();
         this.dirty = false;
         this.trigger("data_updated");
+    }
+
+    update_unique_ids() {
+        let names = this.get("names");
+        const show_labels = (names != null && names.length !== 0);
+        names = (show_labels) ? names : this.mark_data.map(function(data, index) {
+            return "Dot" + index;
+        });
+        let unique_ids = [];
+        if(this.get("names_unique")) {
+            unique_ids = names.slice(0);
+        } else {
+            unique_ids = _.range(this.mark_data.length);
+        }
+
+        this.mark_data.forEach(function(data, index){
+            data.name = names[index];
+            data.unique_id = unique_ids[index];
+        });
     }
 
     update_labels() {

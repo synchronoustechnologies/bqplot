@@ -79,12 +79,12 @@ export abstract class ScatterBase extends Mark {
     }
 
     set_ranges() {
-        const x_scale = this.scales.x,
-            y_scale = this.scales.y,
-            size_scale = this.scales.size,
-            opacity_scale = this.scales.opacity,
-            skew_scale = this.scales.skew,
-            rotation_scale = this.scales.rotation;
+        const x_scale = this.scales.x;
+        const y_scale = this.scales.y;
+        const size_scale = this.scales.size;
+        const opacity_scale = this.scales.opacity;
+        const skew_scale = this.scales.skew;
+        const rotation_scale = this.scales.rotation;
         if(x_scale) {
             x_scale.set_range(this.parent.padded_range("x", x_scale.model));
         }
@@ -144,8 +144,7 @@ export abstract class ScatterBase extends Mark {
                     this.color_scale_updated(animate);
                 }
             });
-            color_scale.on("color_scale_range_changed",
-                            this.color_scale_updated, this);
+            color_scale.on("color_scale_range_changed", this.color_scale_updated, this);
         }
         if (size_scale) {
             this.listenTo(size_scale, "domain_changed", () => {
@@ -271,11 +270,8 @@ export abstract class ScatterBase extends Mark {
     draw(animate?) {
         this.set_ranges();
 
-        const elements = this.d3el.selectAll(".object_grp")
-            .data(this.model.mark_data, (d) => { return d.unique_id; });
-
-        const elements_added = elements.enter().append("g")
-            .attr("class", "object_grp")
+        const elements = this.d3el.selectAll(".object_grp").data(this.model.mark_data, (d) => { return d.unique_id; });
+        const elements_added = elements.enter().append("g").attr("class", "object_grp")
 
         this.update_position(animate);
 
@@ -329,9 +325,7 @@ export abstract class ScatterBase extends Mark {
 
     scatter_hover_handler(args) {
         const index = args.index;
-
-        this.model.set("hovered_point",
-                       index, {updated_view: this});
+        this.model.set("hovered_point", index, {updated_view: this});
         this.touch();
     }
 
@@ -575,8 +569,10 @@ export abstract class ScatterBase extends Mark {
     set_drag_behavior() {
         const elements = this.d3el.selectAll(".object_grp");
         if (this.model.get("enable_move")) {
+            console.log('enable_move')
             elements.call(this.drag_listener);
         } else {
+            console.log('.drag')
             elements.on(".drag", null);
         }
     }

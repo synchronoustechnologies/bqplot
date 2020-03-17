@@ -65,7 +65,7 @@ export class ScatterBaseModel extends MarkModel {
 
     update_mark_data() {
         let x_data = this.get("x");
-        const y_data = this.get("y");
+        let y_data = this.get("y");
 
         if (x_data.length === 0 || y_data.length === 0) {
             this.mark_data = [];

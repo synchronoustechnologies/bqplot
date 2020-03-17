@@ -337,10 +337,45 @@ class Gantt(Mark):
                    'triangle-up', 'arrow', 'rectangle', 'ellipse'],
                   default_value=None, allow_none=True)\
         .tag(sync=True, display_name='Marker')
-    marker_size = Int(64).tag(sync=True, display_name='Default size')
 
     opacities = List().tag(sync=True, display_name='Opacity')
     fill_opacities = List().tag(sync=True, display_name='Fill Opacity')
+
+    # Drag & Drop
+    hovered_style = Dict().tag(sync=True)
+    unhovered_style = Dict().tag(sync=True)
+    hovered_point = Int(None, allow_none=True).tag(sync=True)
+    enable_move = Bool().tag(sync=True)
+    restrict_x = Bool().tag(sync=True)
+    restrict_y = Bool().tag(sync=True)
+    update_on_move = Bool().tag(sync=True)
+
+    def __init__(self, **kwargs):
+        self._drag_start_handlers = CallbackDispatcher()
+        self._drag_handlers = CallbackDispatcher()
+        self._drag_end_handlers = CallbackDispatcher()
+        super(Gantt, self).__init__(**kwargs)
+
+    def on_drag_start(self, callback, remove=False):
+        self._drag_start_handlers.register_callback(callback, remove=remove)
+
+    def on_drag(self, callback, remove=False):
+        self._drag_handlers.register_callback(callback, remove=remove)
+
+    def on_drag_end(self, callback, remove=False):
+        self._drag_end_handlers.register_callback(callback, remove=remove)
+
+    def _handle_custom_msgs(self, _, content, buffers=None):
+        event = content.get('event', '')
+
+        if event == 'drag_start':
+            self._drag_start_handlers(self, content)
+        elif event == 'drag':
+            self._drag_handlers(self, content)
+        elif event == 'drag_end':
+            self._drag_end_handlers(self, content)
+
+        super(Gantt, self)._handle_custom_msgs(self, content)
 
     _view_name = Unicode('Gantt').tag(sync=True)
     _model_name = Unicode('GanttModel').tag(sync=True)

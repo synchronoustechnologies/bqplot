@@ -57,7 +57,7 @@ from .figure import Figure
 from .scales import Scale, LinearScale, Mercator
 from .axes import Axis
 from .marks import (Lines, Scatter, ScatterGL, Hist, Bars, OHLC, Pie, Map, Image,
-                    Label, HeatMap, GridHeatMap, topo_load, Boxplot, Bins)
+                    Label, HeatMap, GridHeatMap, topo_load, Boxplot, Bins, Gantt)
 from .toolbar import Toolbar
 from .interacts import (BrushIntervalSelector, FastIntervalSelector,
                         BrushSelector, IndexSelector, MultiSelector,

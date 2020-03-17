@@ -15,60 +15,345 @@
 
 import * as _ from 'underscore';
 import * as d3 from 'd3';
-// var d3 =Object.assign({}, require("d3-array"), require("d3-selection"), require("d3-shape"), require("d3-transition"));
 import { Mark } from './Mark';
 import { GanttModel } from './GanttModel'
 import * as markers from './Markers';
 
+const d3GetEvent = function(){return require("d3-selection").event}.bind(this);
+
 const bqSymbol = markers.symbol;
 
 export class Gantt extends Mark {
-
     render() {
         const base_render_promise = super.render();
         const that = this;
+
         this.dot = bqSymbol().size(this.model.get("marker_size"));
         if (this.model.get("marker")) {
             this.dot.type(this.model.get("marker"));
         }
 
+        this.drag_listener = d3.drag()
+            .subject(function(d: any) {
+                return {
+                    x: that.x_scale.scale(d.x),
+                    y: that.y_scale.scale(d.y),
+                };
+            })
+            .on("start", function(d, i) { return that.drag_start(d, i, this); })
+            .on("drag", function(d, i) { return that.on_drag(d, i, this); })
+            .on("end", function(d, i) { return that.drag_ended(d, i, this); });
+
+        this.selected_style = this.model.get("selected_style");
+        this.unselected_style = this.model.get("unselected_style");
+        this.selected_indices = this.model.get("selected");
+
+        this.hovered_style = this.model.get("hovered_style");
+        this.unhovered_style = this.model.get("unhovered_style");
+        this.hovered_index = (!this.model.get("hovered_point")) ? null : [this.model.get("hovered_point")];
+
+        // Mabye dont need "dot"?
+        this.display_el_classes = ["line", "legendtext", "dot"];
+        this.event_metadata = {
+            "mouse_over": {
+                "msg_name": "hover",
+                "lookup_data": false,
+                "hit_test": true
+            },
+            "legend_clicked":  {
+                "msg_name": "legend_click",
+                "hit_test": true
+            },
+            "element_clicked": {
+                "msg_name": "element_click",
+                "lookup_data": false,
+                "hit_test": true
+            },
+            "parent_clicked": {
+                "msg_name": "background_click",
+                "hit_test": false
+            }
+        };
+
         // TODO: create_listeners is put inside the promise success handler
         // because some of the functions depend on child scales being
         // created. Make sure none of the event handler functions make that
         // assumption.
-        this.displayed.then(function() {
-            that.parent.tooltip_div.node().appendChild(that.tooltip_div.node());
-            that.create_tooltip();
+        this.displayed.then(() => {
+            this.parent.tooltip_div.node().appendChild(that.tooltip_div.node());
+            this.create_tooltip();
         });
 
-        this.display_el_classes = ["line", "legendtext", "dot"];
-        return base_render_promise.then(function() {
-            that.event_listeners = {};
-            that.process_interactions();
-            that.create_listeners();
-            that.compute_view_padding();
-            that.draw(false);
+        return base_render_promise.then(() => {
+            this.event_listeners = {};
+            this.process_interactions();
+            this.create_listeners();
+            this.compute_view_padding();
+            this.draw(false);
         });
     }
 
+    // Drag functions
+    drag_start(d, i, dragged_node) {
+        // d[0] and d[1] will contain the previous position (in pixels)
+        // of the dragged point, for the length of the drag event
+        const x_scale = this.scales.x, y_scale = this.scales.y;
+        d[0] = x_scale.scale(d.x) + x_scale.offset;
+        d[1] = y_scale.scale(d.y) + y_scale.offset;
+
+        this.set_drag_style(d, i, dragged_node)
+
+        this.send({
+            event: "drag_start",
+            point: {x : d.x, y: d.y},
+            index: i
+        });
+    }
+
+    on_drag(d, i, dragged_node) {
+        const x_scale = this.scales.x, y_scale = this.scales.y;
+        // If restrict_x is true, then the move is restricted only to the X
+        // direction.
+        const restrict_x = this.model.get("restrict_x"),
+            restrict_y = this.model.get("restrict_y");
+        if (restrict_x && restrict_y) { return; }
+        if (!restrict_y) { d[0] = d3GetEvent().x; }
+        if (!restrict_x) { d[1] = d3GetEvent().y; }
+
+        d3.select(dragged_node)
+          .attr("transform", () => {
+              return "translate(" + d[0] + "," + d[1] + ")";
+          });
+        this.send({
+            event: "drag",
+            origin: {x: d.x, y: d.y},
+            point: {
+                x: x_scale.invert(d[0]),
+                y: y_scale.invert(d[1])
+            },
+            index: i
+        });
+        if(this.model.get("update_on_move")) {
+            // saving on move if flag is set
+            this.update_array(d, i);
+        }
+    }
+
+    drag_ended(d, i, dragged_node) {
+        const x_scale = this.scales.x;
+        const y_scale = this.scales.y;
+
+        this.reset_drag_style(d, i, dragged_node);
+        this.update_array(d, i);
+        this.send({
+            event: "drag_end",
+            point: {
+                x: x_scale.invert(d[0]),
+                y: y_scale.invert(d[1])
+            },
+            index: i
+        });
+    }
+
+    update_array(d, i) {
+        const x_scale = this.scales.x;
+        const y_scale = this.scales.y;
+
+        if (!this.model.get("restrict_y")){
+            const x = this.model.get('x').slice(); // copy
+            x[i] = x_scale.invert(d[0]);
+            this.model.set("x", x);
+        }
+        if (!this.model.get("restrict_x")){
+            const y = this.model.get('y').slice()
+            y[i] = y_scale.invert(d[1]);
+            this.model.set("y", y);
+        }
+        this.touch();
+    }
+
+    set_drag_behavior() {
+        // const elements = this.d3el.selectAll(".object_grp");
+        const elements = this.d3el.selectAll(".curve");
+        if (this.model.get("enable_move")) {
+            console.log('enable_move')
+            elements.call(this.drag_listener);
+        } else {
+            console.log('.drag')
+            elements.on(".drag", null);
+        }
+    }
+
+    set_drag_style(d, i, dragged_node) {
+        d3.select(dragged_node)
+          .select("path")
+          .classed("drag_scatter", true)
+          .transition("set_drag_style")
+          .attr("d", this.dot.size(5 * this.model.get("default_size")));
+
+        const drag_color = this.model.get("drag_color");
+        if (drag_color) {
+            d3.select(dragged_node)
+              .select("path")
+              .style("fill", drag_color)
+              .style("stroke", drag_color);
+        }
+    }
+
+    reset_drag_style(d, i, dragged_node) {
+        const stroke = this.model.get("stroke");
+        const original_color = this.get_element_color(d, i);
+
+        d3.select(dragged_node)
+          .select("path")
+          .classed("drag_scatter", false)
+          .transition("reset_drag_style");
+
+        if (this.model.get("drag_color")) {
+            d3.select(dragged_node)
+              .select("path")
+              .style("fill", original_color)
+              .style("stroke", stroke ? stroke : original_color);
+        }
+    }
+
+    update_selected(model, value) {
+        this.selected_indices = value;
+        this.apply_styles();
+    }
+
+    update_hovered(model, value) {
+        this.hovered_index = value === null ? value : [value];
+        this.apply_styles();
+    }
+
+    // Hovered Style related functions
+    hovered_style_updated(model, style) {
+        this.hovered_style = style;
+        this.clear_style(model.previous("hovered_style"), this.hovered_index);
+        this.style_updated(style, this.hovered_index);
+    }
+
+    unhovered_style_updated(model, style) {
+        this.unhovered_style = style;
+        const hov_indices = this.hovered_index;
+        const unhovered_indices = (hov_indices) ?
+            _.range(this.model.mark_data.length).filter((index) => {
+                return hov_indices.indexOf(index) === -1;
+            }) : [];
+        this.clear_style(model.previous("unhovered_style"), unhovered_indices);
+        this.style_updated(style, unhovered_indices);
+    }
+
+    reset_selection() {
+        this.model.set("selected", null);
+        this.selected_indices = null;
+        this.touch();
+    }
+
+    process_click(interaction) {
+        super.process_click(interaction);
+        switch (interaction){
+            // case "add":
+            //     this.event_listeners.parent_clicked = this.add_element;
+            //     this.event_listeners.element_clicked = () => {};
+            //     break;
+            // case "delete":
+            //     this.event_listeners.parent_clicked = () => {};
+            //     this.event_listeners.element_clicked = this.delete_element;
+            //     break;
+            case "select":
+                this.event_listeners.parent_clicked = this.reset_selection;
+                this.event_listeners.element_clicked = this.gantt_click_handler;
+                break;
+        }
+    }
+
+    gantt_click_handler(args) {
+        const index : number = args.index;
+        const idx = this.model.get("selected") || [];
+        let selected : Array<number> = Array.from(idx);
+        // index of bar i. Checking if it is already present in the list.
+        const elem_index = selected.indexOf(index);
+        // Replacement for "Accel" modifier.
+        const accelKey = d3GetEvent().ctrlKey || d3GetEvent().metaKey;
+
+        if(elem_index > -1 && accelKey) {
+            // if the index is already selected and if accel key is
+            // pressed, remove the element from the list
+            selected.splice(elem_index, 1);
+        } else {
+            if(accelKey) {
+                //If accel is pressed and the bar is not already selcted
+                //add the bar to the list of selected bars.
+                selected.push(index);
+            }
+            // updating the array containing the bar indexes selected
+            // and updating the style
+            else {
+                //if accel is not pressed, then clear the selected ones
+                //and set the current element to the selected
+                selected = [];
+                selected.push(index);
+            }
+        }
+        this.model.set("selected",
+                       ((selected.length === 0) ? null : new Uint32Array(selected)),
+                       {updated_view: this});
+        this.touch();
+        let e = d3GetEvent();
+        if(!e) {
+            e = window.event;
+        }
+        if(e.cancelBubble !== undefined) { // IE
+            e.cancelBubble = true;
+        }
+        if(e.stopPropagation) {
+            e.stopPropagation();
+        }
+        e.preventDefault();
+    }
+
+    draw_elements(animate, elements_added) {
+        const animation_duration = animate === true ? this.parent.model.get("animation_duration") : 0;
+        // const elements = this.d3el.selectAll(".object_grp")
+        const elements = this.d3el.selectAll(".curve")
+
+        elements_added.append("path").attr("class", "dot element");
+        elements_added.append("text").attr("class", "dot_text");
+        elements.select("path")
+            .transition("draw_elements")
+            .duration(animation_duration)
+            .attr("d", this.dot);
+
+        // this.update_names(animate);
+        this.apply_styles();
+    }
+
+    // Default line functions
     set_ranges() {
         const x_scale = this.scales.x;
+        const y_scale = this.scales.y;
         if(x_scale) {
             x_scale.set_range(this.parent.padded_range("x", x_scale.model));
         }
-        const y_scale = this.scales.y;
         if(y_scale) {
             y_scale.set_range(this.parent.padded_range("y", y_scale.model));
         }
     }
 
     set_positional_scales() {
-        const x_scale = this.scales.x, y_scale = this.scales.y;
+        const x_scale = this.scales.x;
+        const y_scale = this.scales.y;
         this.listenTo(x_scale, "domain_changed", function() {
-            if (!this.model.dirty) { this.update_line_xy(); }
+            if (!this.model.dirty) {
+                this.update_line_xy();
+            }
         });
         this.listenTo(y_scale, "domain_changed", function() {
-            if (!this.model.dirty) { this.update_line_xy(); }
+            if (!this.model.dirty) {
+                this.update_line_xy();
+            }
         });
     }
 
@@ -84,9 +369,14 @@ export class Gantt extends Mark {
 
     create_listeners() {
         super.create_listeners();
+        /*
         this.d3el.on("mouseover", _.bind(function() { this.event_dispatcher("mouse_over"); }, this))
             .on("mousemove", _.bind(function() { this.event_dispatcher("mouse_move"); }, this))
             .on("mouseout", _.bind(function() { this.event_dispatcher("mouse_out"); }, this));
+        */
+        this.d3el.on("mouseover", () => { this.event_dispatcher("mouse_over"); })
+        this.d3el.on("mousemove", () => { this.event_dispatcher("mouse_move"); })
+        this.d3el.on("mouseout", () => { this.event_dispatcher("mouse_out"); });
 
         this.listenTo(this.model, "change:tooltip", this.create_tooltip);
 
@@ -95,56 +385,58 @@ export class Gantt extends Mark {
         this.listenTo(this.model, "change:close_path", this.update_path_style);
 
         // FIXME: multiple calls to update_style. Use on_some_change.
+        // this.listenTo(this.model, "labels_updated", this.update_labels);
         this.listenTo(this.model, "change:colors", this.update_style);
         this.listenTo(this.model, "change:opacities", this.update_style);
         this.listenTo(this.model, "change:fill_opacities", this.update_style);
         this.listenTo(this.model, "change:fill_colors", this.update_style);
-
         this.listenTo(this.model, "change:fill", this.update_fill);
-
-        this.listenTo(this.model, "data_updated", function() {
-            const animate = true;
-            this.draw(animate);
-        });
-        this.listenTo(this.model, "labels_updated", this.update_labels);
         this.listenTo(this.model, "change:stroke_width", this.update_stroke_width);
         this.listenTo(this.model, "change:labels_visibility", this.update_legend_labels);
         this.listenTo(this.model, "change:curves_subset", this.update_curves_subset);
         this.listenTo(this.model, "change:line_style", this.update_line_style);
+        this.listenTo(this.model, "change:marker", this.update_marker);
+        this.listenTo(this.model, "change:marker_size", this.update_marker_size);
+
+        // Drag & Drop
+        this.listenTo(this.model, "change:enable_move", this.set_drag_behavior);
+        this.listenTo(this.model, "change:selected", this.update_selected);
         this.listenTo(this.model, "change:interactions", this.process_interactions);
-        this.listenTo(this.parent, "bg_clicked", function() {
+        this.listenTo(this.model, "change:hovered_point", this.update_hovered);
+        this.listenTo(this.model, "change:hovered_style", this.hovered_style_updated);
+        this.listenTo(this.model, "change:unhovered_style", this.unhovered_style_updated);
+
+        this.listenTo(this.parent, "bg_clicked", () => {
             this.event_dispatcher("parent_clicked");
         });
 
-        this.listenTo(this.model, "change:marker", this.update_marker);
-        this.listenTo(this.model, "change:marker_size", this.update_marker_size);
+        this.listenTo(this.model, "data_updated", () => {
+            const animate = true;
+            this.draw(animate);
+        });
     }
 
     update_legend_labels() {
         if(this.model.get("labels_visibility") === "none") {
-            this.d3el.selectAll(".legend")
-              .attr("display", "none");
-            this.d3el.selectAll(".curve_label")
-              .attr("display", "none");
+            this.d3el.selectAll(".legend").attr("display", "none");
+            this.d3el.selectAll(".curve_label").attr("display", "none");
         } else if(this.model.get("labels_visibility") === "label") {
-            this.d3el.selectAll(".legend")
-              .attr("display", "none");
-            this.d3el.selectAll(".curve_label")
-              .attr("display", "inline");
+            this.d3el.selectAll(".legend").attr("display", "none");
+            this.d3el.selectAll(".curve_label").attr("display", "inline");
         } else {
-            this.d3el.selectAll(".legend")
-              .attr("display", "inline");
-            this.d3el.selectAll(".curve_label")
-              .attr("display", "none");
+            this.d3el.selectAll(".legend").attr("display", "inline");
+            this.d3el.selectAll(".curve_label").attr("display", "none");
         }
     }
 
+    /*
     update_labels() {
         this.d3el.selectAll(".curve")
           .data(this.model.mark_data)
           .select(".curve_label")
           .text(function(d) { return d.name; });
     }
+    */
 
     get_line_style() {
         switch (this.model.get("line_style")) {
@@ -173,11 +465,9 @@ export class Gantt extends Mark {
 
     update_stroke_width(model, stroke_width) {
         this.compute_view_padding();
-        this.d3el.selectAll(".curve").select(".line")
-          .style("stroke-width", stroke_width);
+        this.d3el.selectAll(".curve").select(".line").style("stroke-width", stroke_width);
         if (this.legend_el) {
-            this.legend_el.select("path")
-              .style("stroke-width", stroke_width);
+            this.legend_el.select("path").style("stroke-width", stroke_width);
         }
     }
 
@@ -286,8 +576,7 @@ export class Gantt extends Mark {
             return;
         }
 
-        const index = Math.min(this.bisect(this.x_pixels, pixel),
-          Math.max((this.x_pixels.length - 1), 0));
+        const index = Math.min(this.bisect(this.x_pixels, pixel), Math.max((this.x_pixels.length - 1), 0));
         this.model.set("selected", new Uint32Array([index]));
         this.touch();
     }
@@ -311,8 +600,7 @@ export class Gantt extends Mark {
         const legend_data = this.model.mark_data.map(function(d) {
             return {index: d.index, name: d.name, color: d.color};
         });
-        this.legend_el = elem.selectAll(".legend" + this.uuid)
-          .data(legend_data);
+        this.legend_el = elem.selectAll(".legend" + this.uuid).data(legend_data);
 
         const that = this,
             rect_dim = inter_y_disp * 0.8,
@@ -325,8 +613,8 @@ export class Gantt extends Mark {
             .y(function(d) { return d[1]; });
 
         this.legend_path_data = [[0, rect_dim],
-                                 [rect_dim / 2, 0],
-                                 [rect_dim, rect_dim / 2]];
+                                [rect_dim / 2, 0],
+                                [rect_dim, rect_dim / 2]];
 
         const legend = this.legend_el.enter()
           .append("g")
@@ -425,8 +713,8 @@ export class Gantt extends Mark {
     }
 
     update_fill() {
-        const fill = this.model.get("fill"),
-            area = (fill === "top" || fill === "bottom" || fill === "between");
+        const fill = this.model.get("fill");
+        const area = (fill === "top" || fill === "bottom" || fill === "between");
 
         const y_scale = this.scales.y;
 
@@ -449,10 +737,11 @@ export class Gantt extends Mark {
           })
         // update legend fill
         if (this.legend_el) {
-           this.legend_el.select("path")
-             .style("fill", function(d, i) {
-                 return fill === "none" ? "" : that.get_fill_color(d, i);
-             })
+            this.legend_el.select("path")
+                .style("fill", function(d, i) {
+                    return fill === "none" ? "" : that.get_fill_color(d, i);
+                }
+            )
         }
     }
 
@@ -543,15 +832,18 @@ export class Gantt extends Mark {
         return curve_types[this.model.get("interpolation")];
     }
 
-    draw(animate) {
+    draw(animate?) {
         this.set_ranges();
-        const curves_sel = this.d3el.selectAll(".curve")
-          .data(this.model.mark_data);
+
+        const curves_sel = this.d3el.selectAll(".curve").data(this.model.mark_data);
+        const elements = this.d3el.selectAll(".curve").data(this.model.mark_data, (d) => {
+            return d.unique_id;
+        });
+        const elements_added = elements.enter().append("g").attr("class", "curve")
 
         const y_scale = this.scales.y;
 
-        const new_curves = curves_sel.enter().append("g")
-          .attr("class", "curve");
+        const new_curves = curves_sel.enter().append("g").attr("class", "curve");
         new_curves.append("path")
           .attr("class", "line")
           .attr("fill", "none");
@@ -573,7 +865,7 @@ export class Gantt extends Mark {
               this.event_dispatcher("element_clicked");
           }, this));
 
-        this.draw_dots();
+        // this.draw_dots();
 
         this.line = d3.line()
           .curve(this.get_interpolation())
@@ -591,19 +883,31 @@ export class Gantt extends Mark {
 
         // alter the display only if a few of the curves are visible
         this.update_curves_subset();
+
+        this.draw_elements(animate, elements_added)
+
+        // Removed the transition on exit as it was causing issues.
+        // Elements are not removed until the transition is complete and
+        // hence the setting styles function doesn't behave as intended.
+        // The only way to call the function after all of the elements are
+        // removed is round-about and doesn't look very nice visually.
+        elements.exit().remove();
     }
 
+    /*
     draw_dots() {
         if (this.model.get("marker")) {
             const dots = this.d3el.selectAll(".curve").selectAll(".dot")
                 .data(function(d, i) {
                     return d.values.map(function(e) {
-                        return {x: e.x, y: e.y, sub_index: e.sub_index}; });
+                        return {x: e.x, y: e.y, sub_index: e.sub_index};
+                    });
                 });
             dots.enter().append("path").attr("class", "dot");
             dots.exit().remove();
         }
     }
+    */
 
     update_dots_xy(animate) {
         if (this.model.get("marker")) {
@@ -611,12 +915,13 @@ export class Gantt extends Mark {
             const animation_duration = animate === true ? this.parent.model.get("animation_duration") : 0;
             const dots = this.d3el.selectAll(".curve").selectAll(".dot");
 
-            dots.transition("update_dots_xy").duration(animation_duration)
+            dots.transition("update_dots_xy")
+                .duration(animation_duration)
                 .attr("transform", function(d) { return "translate(" + (x_scale.scale(d.x) + x_scale.offset) +
-                        "," + (y_scale.scale(d.y) + y_scale.offset) + ")";
+                    "," + (y_scale.scale(d.y) + y_scale.offset) + ")";
                 })
                 .attr("d", this.dot.size(this.model.get("marker_size"))
-                               .type(this.model.get("marker")));
+                .type(this.model.get("marker")));
         }
     }
 
@@ -654,7 +959,7 @@ export class Gantt extends Mark {
 
     update_marker(model, marker) {
         if (marker) {
-            this.draw_dots();
+            // this.draw_dots();
             this.update_dots_xy(false);
             this.update_marker_style();
             if (this.legend_el) {
@@ -692,9 +997,14 @@ export class Gantt extends Mark {
     line: any;
     x_pixels: Array<number>;
     y_pixels: Array<number>;
+    x_scale: any;
+    y_scale: any;
     pixel_coords: Array<number>;
+    drag_listener: any;
+    hovered_index: any;
+    hovered_style: any;
+    unhovered_style: any;
 
     // Overriding super class
     model: GanttModel;
 }
-
